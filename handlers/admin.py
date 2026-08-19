@@ -268,42 +268,39 @@ async def cmd_stats(message: Message):
     await message.answer("\n".join(lines))
 
 
-# In your admin handlers
-@router.message(Command("addchannel"))
-async def cmd_add_channel(message: Message, command: CommandObject):
-    """Add another mandatory channel (doesn't remove existing ones)."""
-    if not await require_super_admin(message.from_user.id):
-        await message.answer("❌ Bu buyruq faqat super admin uchun.")
+@router.message(Command("setchannel"))
+async def cmd_setchannel(message: Message, command: CommandObject, bot: Bot):
+    if await require_super_admin(message) is None:
         return
-    
-    args = (command.args or "").strip()
-    if not args:
-        await message.answer("Format: /addchannel <chat_id> | <username>")
+
+    parts = (command.args or "").split()
+    if not parts:
+        await message.answer("Format: /setchannel <chat_id> [@username_or_invite_link]")
         return
-    
-    parts = [p.strip() for p in args.split("|")]
-    if len(parts) < 2:
-        await message.answer("Format: /addchannel <chat_id> | <username>")
-        return
-    
+
     try:
         chat_id = int(parts[0])
-        if chat_id > 0:
-            chat_id = -chat_id
     except ValueError:
-        await message.answer("❌ Noto'g'ri chat_id.")
+        await message.answer("⚠️ chat_id butun son bo'lishi kerak / chat_id must be a number.")
         return
-    
-    username = parts[1].replace("@", "").strip()
-    
-    # Save channel (keep existing ones)
-    await db.set_channel(chat_id, username, username, "")
-    
-    # Get all channels to show
-    channels = await db.get_mandatory_channels()
-    channel_list = "\n".join([f"• @{c.get('username', c.get('_id', ''))}" for c in channels])
-    
-    await message.answer(f"✅ Kanal qo'shildi!\n\nBarcha kanallar:\n{channel_list}")
+
+    username, invite_link = "", ""
+    if len(parts) > 1:
+        v = parts[1]
+        if v.startswith("@"):
+            username = v.lstrip("@")
+        else:
+            invite_link = v
+
+    title = ""
+    try:
+        chat = await bot.get_chat(chat_id)
+        title = chat.title or ""
+    except TelegramAPIError as e:
+        log.warning("could not fetch chat info for %s: %s", chat_id, e)
+
+    channel = await db.set_channel(chat_id, username, title, invite_link)
+    await message.answer(f"✅ Kanal o'rnatildi / Channel set: {channel['title']} ({channel['_id']})")
 
 
 @router.message(Command("addadmin"))
