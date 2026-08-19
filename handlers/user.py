@@ -35,34 +35,52 @@ def parse_movie_number(raw: str) -> int | None:
     return n
 
 
+# Update is_subscribed function
 async def is_subscribed(bot: Bot, telegram_id: int) -> bool:
-    """Checks channel membership using username instead of ID."""
-    channel = await db.get_mandatory_channel()
-    if channel is None:
+    """Checks membership in ALL mandatory channels."""
+    channels = await db.get_mandatory_channels()
+    if not channels:
         return True
 
+    # Check cache first
     cached = ratelimit.get_cached_subscription(telegram_id)
     if cached is not None:
         return cached
 
-    try:
-        # Use username instead of ID if available
-        if channel.get("username"):
-            chat_id = f"@{channel['username']}"
-        else:
-            chat_id = channel["_id"]
-        
-        log.info(f"Checking membership in chat: {chat_id}")
-        member = await bot.get_chat_member(chat_id=chat_id, user_id=telegram_id)
-        log.info(f"Member status: {member.status}")
-        
-    except TelegramAPIError as e:
-        log.warning("get_chat_member failed: %s", e)
-        return False
+    # Check each channel
+    for channel in channels:
+        try:
+            chat_id = channel.get("_id")
+            member = await bot.get_chat_member(chat_id=chat_id, user_id=telegram_id)
+            
+            if member.status not in VALID_MEMBER_STATUSES:
+                # Not subscribed to this channel
+                ratelimit.set_cached_subscription(telegram_id, False, config.SUBSCRIPTION_CACHE_SECONDS)
+                return False
+                
+        except TelegramAPIError as e:
+            log.warning(f"get_chat_member failed for channel {chat_id}: {e}")
+            ratelimit.set_cached_subscription(telegram_id, False, config.SUBSCRIPTION_CACHE_SECONDS)
+            return False
 
-    subscribed = member.status in VALID_MEMBER_STATUSES
-    ratelimit.set_cached_subscription(telegram_id, subscribed, config.SUBSCRIPTION_CACHE_SECONDS)
-    return subscribed
+    # Subscribed to all channels
+    ratelimit.set_cached_subscription(telegram_id, True, config.SUBSCRIPTION_CACHE_SECONDS)
+    return True
+
+
+# Update check_subscription_or_prompt function
+async def check_subscription_or_prompt(bot: Bot, chat_id: int, telegram_id: int, pending_movie_number: int = 0) -> bool:
+    """Returns True if verified in ALL channels. Otherwise sends prompt and returns False."""
+    if await is_subscribed(bot, telegram_id):
+        return True
+
+    channels = await db.get_mandatory_channels()
+    if not channels:
+        return True
+
+    kb = keyboards.subscription_keyboard(channels, pending_movie_number)
+    await bot.send_message(chat_id, texts.NOT_SUBSCRIBED, reply_markup=kb)
+    return False
 
 
 async def upsert_from_message(message: Message) -> dict | None:
@@ -237,6 +255,7 @@ async def cb_verify(callback: CallbackQuery, bot: Bot):
     await callback.answer()
     if callback.message is None:
         return
+    
     user_doc = await db.upsert_user(
         callback.from_user.id, callback.from_user.username or "",
         callback.from_user.first_name or "", callback.from_user.last_name or "",
@@ -258,7 +277,8 @@ async def cb_verify(callback: CallbackQuery, bot: Bot):
             pending_movie_number = 0
 
     if not await is_subscribed(bot, telegram_id):
-        await bot.send_message(chat_id, texts.STILL_NOT_SUBSCRIBED)
+        # Re-send the prompt with all channels
+        await check_subscription_or_prompt(bot, chat_id, telegram_id, pending_movie_number)
         return
 
     await db.set_user_subscribed(telegram_id, True)

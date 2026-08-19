@@ -16,16 +16,17 @@ HELP = (
     "Misol / Example: /movie 1025"
 )
 
+# Update NOT_SUBSCRIBED message
 NOT_SUBSCRIBED = (
-    "🔒 Davom etish uchun avval kanalimizga a'zo bo'ling.\n"
-    "To continue, please join our channel first.\n\n"
-    "A'zo bo'lgach, \"✅ Tekshirish\" tugmasini bosing.\n"
-    "After joining, tap \"✅ Verify\"."
+    "⚠️ Kino olish uchun quyidagi kanallarga a'zo bo'lishingiz kerak!\n\n"
+    "1. Barcha kanallarga a'zo bo'ling\n"
+    "2. So'ng 'A'zo bo'ldim' tugmasini bosing\n\n"
+    "A'zo bo'lgandan so'ng kino olishingiz mumkin."
 )
 
 STILL_NOT_SUBSCRIBED = (
-    "❌ Siz hali kanalga a'zo bo'lmagansiz. Iltimos, avval qo'shiling.\n"
-    "You haven't joined the channel yet. Please join first, then tap Verify again."
+    "❌ Siz hali barcha kanallarga a'zo bo'lmagansiz!\n\n"
+    "Iltimos, barcha kanallarga a'zo bo'ling va qaytadan urinib ko'ring."
 )
 
 SUBSCRIPTION_VERIFIED = (

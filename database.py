@@ -218,21 +218,19 @@ async def count_active_admins() -> int:
 
 # --- channels --------------------------------------------------------------------
 
+# Change this function in database.py
 async def get_mandatory_channel() -> dict | None:
     return await channels.find_one({"is_mandatory": True, "is_active": True}, sort=[("_id", -1)])
 
+# To this:
+async def get_mandatory_channels() -> list[dict]:
+    """Get all mandatory channels."""
+    cursor = channels.find({"is_mandatory": True, "is_active": True})
+    return await cursor.to_list(length=None)
 
-async def set_channel(chat_id: int, username: str, title: str, invite_link: str) -> dict:
-    doc = {
-        "username": username or "", "title": title or "", "invite_link": invite_link or "",
-        "is_mandatory": True, "is_active": True, "updated_at": now(),
-    }
-    await channels.update_one(
-        {"_id": chat_id},
-        {"$set": doc, "$setOnInsert": {"_id": chat_id, "created_at": now()}},
-        upsert=True,
-    )
-    return await channels.find_one({"_id": chat_id})
+async def get_mandatory_channel() -> dict | None:
+    """Get the latest mandatory channel (for backward compatibility)."""
+    return await channels.find_one({"is_mandatory": True, "is_active": True}, sort=[("_id", -1)])
 
 
 # --- requests (for stats) ----------------------------------------------------
