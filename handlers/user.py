@@ -98,8 +98,13 @@ async def check_subscription_or_prompt(bot: Bot, chat_id: int, telegram_id: int,
     if channel is None:
         return True  # nothing configured to gate on
 
-    kb = keyboards.subscription_keyboard(channel, pending_movie_number)
-    await bot.send_message(chat_id, texts.NOT_SUBSCRIBED, reply_markup=kb)
+    try:
+        kb = keyboards.subscription_keyboard(channel, pending_movie_number)
+        await bot.send_message(chat_id, texts.NOT_SUBSCRIBED, reply_markup=kb)
+    except Exception:
+        log.exception("failed to send subscription prompt to %s", telegram_id)
+        # Still let the user know something's happening rather than silence.
+        await bot.send_message(chat_id, texts.GENERIC_ERROR)
     return False
 
 

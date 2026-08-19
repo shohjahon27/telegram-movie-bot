@@ -3,33 +3,30 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import texts
 
 
-def subscription_keyboard(channels: list[dict], pending_movie_number: int = 0) -> InlineKeyboardMarkup:
-    """Create keyboard with multiple channel join buttons."""
-    keyboard = []
-    
-    # Add join button for each channel
-    for i, channel in enumerate(channels, 1):
-        if channel.get("username"):
-            username = channel["username"].replace("@", "").strip()
-            join_url = f"https://t.me/{username}"
-        elif channel.get("invite_link"):
-            join_url = channel["invite_link"]
-        else:
-            join_url = "https://t.me"
-        
-        channel_title = channel.get("title") or f"Channel {i}"
-        button_text = f"📢 {channel_title}"
-        
-        keyboard.append([InlineKeyboardButton(text=button_text, url=join_url)])
-    
-    # Add verify button
+def subscription_keyboard(channel, pending_movie_number: int = 0) -> InlineKeyboardMarkup:
+    # Defensive: `channel` must be the MongoDB document (a dict). If it's
+    # anything else — a stale/mismatched deploy, bad data, etc. — fail
+    # loudly in the logs but still hand back a usable keyboard instead of
+    # crashing the handler and leaving the user with no response at all.
+    if not isinstance(channel, dict):
+        import logging
+        logging.getLogger("bot.keyboards").error(
+            "subscription_keyboard got non-dict channel: %r (type=%s)", channel, type(channel)
+        )
+        channel = {}
+
+    join_url = channel.get("invite_link") or ""
+    if not join_url and channel.get("username"):
+        join_url = f"https://t.me/{channel['username']}"
+
     verify_data = "verify_sub"
     if pending_movie_number:
         verify_data = f"verify_sub:{pending_movie_number}"
-    
-    keyboard.append([InlineKeyboardButton(text=texts.BTN_VERIFY, callback_data=verify_data)])
-    
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=texts.BTN_JOIN_CHANNEL, url=join_url or "https://t.me")],
+        [InlineKeyboardButton(text=texts.BTN_VERIFY, callback_data=verify_data)],
+    ])
 
 
 def pagination_keyboard(prefix: str, page: int, total_pages: int) -> InlineKeyboardMarkup:
