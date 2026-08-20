@@ -265,3 +265,8 @@ async def finish_broadcast(broadcast_id: str, sent: int, failed: int, status: st
         {"_id": ObjectId(broadcast_id)},
         {"$set": {"total_sent": sent, "total_failed": failed, "status": status, "finished_at": now()}},
     )
+
+async def get_mandatory_channels() -> list[dict]:
+    """Get ALL mandatory channels."""
+    cursor = channels.find({"is_mandatory": True, "is_active": True})
+    return await cursor.to_list(length=None)
