@@ -36,26 +36,37 @@ def parse_movie_number(raw: str) -> int | None:
 
 
 async def is_subscribed(bot: Bot, telegram_id: int) -> bool:
-    """Checks channel membership, using the in-memory cache first to avoid
-    hammering the Telegram API on every message."""
-    channel = await db.get_mandatory_channel()
-    if channel is None:
-        # No channel configured yet — fail open so setup isn't blocked.
+    """True only if the user is currently a member of EVERY configured
+    mandatory channel. Uses the in-memory cache first to avoid hammering
+    the Telegram API on every message; a fresh check (e.g. via the Verify
+    button, which invalidates the cache) always re-queries Telegram live,
+    so a user who left a channel is caught as soon as they next interact
+    with the bot after the cache entry expires (or immediately after
+    tapping Verify)."""
+    mandatory_channels = await db.list_mandatory_channels()
+    if not mandatory_channels:
+        # No channels configured yet — fail open so setup isn't blocked.
         return True
 
     cached = ratelimit.get_cached_subscription(telegram_id)
     if cached is not None:
         return cached
 
-    try:
-        member = await bot.get_chat_member(chat_id=channel["_id"], user_id=telegram_id)
-    except TelegramAPIError as e:
-        log.warning("get_chat_member failed for %s: %s", telegram_id, e)
-        return False  # treat as not-yet-verified rather than crashing the flow
+    for channel in mandatory_channels:
+        try:
+            member = await bot.get_chat_member(chat_id=channel["_id"], user_id=telegram_id)
+        except TelegramAPIError as e:
+            log.warning("get_chat_member failed for %s in channel %s: %s", telegram_id, channel["_id"], e)
+            ratelimit.set_cached_subscription(telegram_id, False, config.SUBSCRIPTION_CACHE_SECONDS)
+            return False  # treat as not-yet-verified rather than crashing the flow
 
-    subscribed = member.status in VALID_MEMBER_STATUSES
-    ratelimit.set_cached_subscription(telegram_id, subscribed, config.SUBSCRIPTION_CACHE_SECONDS)
-    return subscribed
+        if member.status not in VALID_MEMBER_STATUSES:
+            # Missing even one required channel fails the whole check.
+            ratelimit.set_cached_subscription(telegram_id, False, config.SUBSCRIPTION_CACHE_SECONDS)
+            return False
+
+    ratelimit.set_cached_subscription(telegram_id, True, config.SUBSCRIPTION_CACHE_SECONDS)
+    return True
 
 
 async def upsert_from_message(message: Message) -> dict | None:
@@ -89,21 +100,21 @@ async def guard(message_or_cb, user_doc: dict | None, action: str = "") -> bool:
 
 
 async def check_subscription_or_prompt(bot: Bot, chat_id: int, telegram_id: int, pending_movie_number: int = 0) -> bool:
-    """Returns True if verified. Otherwise sends the Join/Verify prompt and
-    returns False."""
+    """Returns True if verified against ALL mandatory channels. Otherwise
+    sends the Join/Verify prompt (with one button per channel) and returns
+    False."""
     if await is_subscribed(bot, telegram_id):
         return True
 
-    channel = await db.get_mandatory_channel()
-    if channel is None:
+    mandatory_channels = await db.list_mandatory_channels()
+    if not mandatory_channels:
         return True  # nothing configured to gate on
 
     try:
-        kb = keyboards.subscription_keyboard(channel, pending_movie_number)
+        kb = keyboards.subscription_keyboard(mandatory_channels, pending_movie_number)
         await bot.send_message(chat_id, texts.NOT_SUBSCRIBED, reply_markup=kb)
     except Exception:
         log.exception("failed to send subscription prompt to %s", telegram_id)
-        # Still let the user know something's happening rather than silence.
         await bot.send_message(chat_id, texts.GENERIC_ERROR)
     return False
 

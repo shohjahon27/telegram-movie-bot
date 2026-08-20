@@ -268,14 +268,17 @@ async def cmd_stats(message: Message):
     await message.answer("\n".join(lines))
 
 
-@router.message(Command("setchannel"))
-async def cmd_setchannel(message: Message, command: CommandObject, bot: Bot):
+@router.message(Command("addchannel", "setchannel"))
+async def cmd_addchannel(message: Message, command: CommandObject, bot: Bot):
+    """Adds a channel to the mandatory list. Users must join ALL mandatory
+    channels to pass verification. /setchannel is kept as an alias for
+    backward compatibility — both add rather than replace."""
     if await require_super_admin(message) is None:
         return
 
     parts = (command.args or "").split()
     if not parts:
-        await message.answer("Format: /setchannel <chat_id> [@username_or_invite_link]")
+        await message.answer("Format: /addchannel <chat_id> [@username_or_invite_link]")
         return
 
     try:
@@ -299,8 +302,45 @@ async def cmd_setchannel(message: Message, command: CommandObject, bot: Bot):
     except TelegramAPIError as e:
         log.warning("could not fetch chat info for %s: %s", chat_id, e)
 
-    channel = await db.set_channel(chat_id, username, title, invite_link)
-    await message.answer(f"✅ Kanal o'rnatildi / Channel set: {channel['title']} ({channel['_id']})")
+    channel = await db.add_mandatory_channel(chat_id, username, title, invite_link)
+    await message.answer(f"✅ Majburiy kanal qo'shildi / Mandatory channel added: {channel['title']} ({channel['_id']})")
+
+
+@router.message(Command("removechannel"))
+async def cmd_removechannel(message: Message, command: CommandObject):
+    if await require_super_admin(message) is None:
+        return
+
+    raw = (command.args or "").strip()
+    try:
+        chat_id = int(raw)
+    except ValueError:
+        await message.answer("Format: /removechannel <chat_id>\nUse /channels to see the chat_id of each mandatory channel.")
+        return
+
+    removed = await db.remove_mandatory_channel(chat_id)
+    if removed:
+        await message.answer(f"✅ Kanal olib tashlandi / Channel removed from mandatory list: {chat_id}")
+    else:
+        await message.answer("⚠️ Bunday majburiy kanal topilmadi / No such mandatory channel found.")
+
+
+@router.message(Command("channels"))
+async def cmd_channels(message: Message):
+    if await require_admin(message) is None:
+        return
+
+    chans = await db.list_mandatory_channels()
+    if not chans:
+        await message.answer("Hech qanday majburiy kanal yo'q. /addchannel bilan qo'shing.\n"
+                              "No mandatory channels configured. Add one with /addchannel.")
+        return
+
+    lines = ["📢 Majburiy kanallar / Mandatory channels:\n"]
+    for c in chans:
+        handle = f"@{c['username']}" if c.get("username") else (c.get("invite_link") or "(no link)")
+        lines.append(f"{c['_id']} — {c.get('title', '(no title)')} — {handle}")
+    await message.answer("\n".join(lines))
 
 
 @router.message(Command("addadmin"))

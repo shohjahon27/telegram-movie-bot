@@ -5,31 +5,12 @@ a single atomic replace_one(..., upsert=True) with no separate uniqueness
 bookkeeping needed.
 """
 from datetime import datetime, timezone
-import ssl
-import certifi
 
 from motor.motor_asyncio import AsyncIOMotorClient
 
 import config
 
-# SSL workaround for macOS
-ssl_context = ssl.create_default_context()
-ssl_context.check_hostname = False
-ssl_context.verify_mode = ssl.CERT_NONE
-
-# Create client with SSL settings
-client = AsyncIOMotorClient(
-    config.MONGO_URI,
-    tls=True,
-    tlsAllowInvalidCertificates=True,
-    tlsCAFile=certifi.where(),
-    serverSelectionTimeoutMS=30000,
-    connectTimeoutMS=30000,
-    socketTimeoutMS=30000,
-    retryWrites=True,
-    w='majority'
-)
-
+client = AsyncIOMotorClient(config.MONGO_URI)
 db = client[config.MONGO_DB_NAME]
 
 users = db.users
@@ -48,31 +29,13 @@ async def init_indexes():
     """Called once at startup. Safe to call every boot (create_index is
     idempotent). This replaces what a migrations/ directory would do in a
     SQL project."""
-    try:
-        # Test connection first
-        await client.admin.command('ping')
-        print("✅ MongoDB connection verified")
-    except Exception as e:
-        print(f"❌ MongoDB connection failed: {e}")
-        raise
-
-    # Create indexes with individual error handling
-    indexes = [
-        (movies, "movie_number", True),
-        (movies, "title", False),
-        (movies, "is_active", False),
-        (requests, "user_id", False),
-        (requests, "movie_number", False),
-        (requests, "requested_at", False),
-        (users, "created_at", False),
-    ]
-    
-    for collection, field, unique in indexes:
-        try:
-            await collection.create_index(field, unique=unique)
-            print(f"✅ Index created: {collection.name}.{field}")
-        except Exception as e:
-            print(f"⚠️ Index {collection.name}.{field}: {e}")
+    await movies.create_index("movie_number", unique=True)
+    await movies.create_index("title")
+    await movies.create_index("is_active")
+    await requests.create_index("user_id")
+    await requests.create_index("movie_number")
+    await requests.create_index("requested_at")
+    await users.create_index("created_at")
 
 
 # --- users -------------------------------------------------------------------
@@ -199,7 +162,11 @@ async def create_admin(telegram_id: int, username: str, role: str, created_by):
         "_id": telegram_id, "username": username or "", "role": role, "is_active": True,
         "created_at": now(), "created_by": created_by,
     }
-    await admins.replace_one({"_id": telegram_id}, doc, upsert=True)
+    await admins.update_one(
+        {"_id": telegram_id},
+        {"$set": {"is_active": True, "role": role}, "$setOnInsert": doc},
+        upsert=True,
+    )
     return await admins.find_one({"_id": telegram_id})
 
 
@@ -217,20 +184,32 @@ async def count_active_admins() -> int:
 
 
 # --- channels --------------------------------------------------------------------
+# Multiple channels can be mandatory at once — a user must be a member of
+# EVERY channel returned by list_mandatory_channels() to pass verification.
 
-# Change this function in database.py
-async def get_mandatory_channel() -> dict | None:
-    return await channels.find_one({"is_mandatory": True, "is_active": True}, sort=[("_id", -1)])
-
-# To this:
-async def get_mandatory_channels() -> list[dict]:
-    """Get all mandatory channels."""
-    cursor = channels.find({"is_mandatory": True, "is_active": True})
+async def list_mandatory_channels() -> list[dict]:
+    cursor = channels.find({"is_mandatory": True, "is_active": True}).sort("_id", 1)
     return await cursor.to_list(length=None)
 
-async def get_mandatory_channel() -> dict | None:
-    """Get the latest mandatory channel (for backward compatibility)."""
-    return await channels.find_one({"is_mandatory": True, "is_active": True}, sort=[("_id", -1)])
+
+async def add_mandatory_channel(chat_id: int, username: str, title: str, invite_link: str) -> dict:
+    doc = {
+        "username": username or "", "title": title or "", "invite_link": invite_link or "",
+        "is_mandatory": True, "is_active": True, "updated_at": now(),
+    }
+    await channels.update_one(
+        {"_id": chat_id},
+        {"$set": doc, "$setOnInsert": {"_id": chat_id, "created_at": now()}},
+        upsert=True,
+    )
+    return await channels.find_one({"_id": chat_id})
+
+
+async def remove_mandatory_channel(chat_id: int) -> bool:
+    """Soft-delete: marks the channel inactive rather than deleting the
+    document, so historical references (if any) don't dangle."""
+    result = await channels.update_one({"_id": chat_id}, {"$set": {"is_active": False}})
+    return result.modified_count > 0
 
 
 # --- requests (for stats) ----------------------------------------------------
