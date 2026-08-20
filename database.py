@@ -158,13 +158,19 @@ async def get_admin(telegram_id: int) -> dict | None:
 
 
 async def create_admin(telegram_id: int, username: str, role: str, created_by):
-    doc = {
-        "_id": telegram_id, "username": username or "", "role": role, "is_active": True,
-        "created_at": now(), "created_by": created_by,
-    }
     await admins.update_one(
         {"_id": telegram_id},
-        {"$set": {"is_active": True, "role": role}, "$setOnInsert": doc},
+        {
+            "$set": {"is_active": True, "role": role},
+            # _id/username/created_at/created_by only get set on first
+            # insert — must NOT overlap with the $set fields above
+            # (role/is_active), since Mongo rejects an update where the
+            # same field is targeted by both $set and $setOnInsert.
+            "$setOnInsert": {
+                "_id": telegram_id, "username": username or "",
+                "created_at": now(), "created_by": created_by,
+            },
+        },
         upsert=True,
     )
     return await admins.find_one({"_id": telegram_id})
